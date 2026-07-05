@@ -1,0 +1,12 @@
+numpy
+pandas
+matplotlib
+scikit-learn
+xgboost
+gluonts
+torch
+lightning
+openpyxl
+pytest
+
+-e .

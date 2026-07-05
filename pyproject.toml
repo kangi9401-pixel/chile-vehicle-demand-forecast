@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chile-forecast"
+version = "0.1.0"
+description = "Vehicle demand forecasting for the Chilean auto market using a DeepAR + XGBoost ensemble, driven by synthetic macroeconomic indicators."
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+where = ["src"]
