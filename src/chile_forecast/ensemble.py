@@ -1,13 +1,13 @@
 """DeepAR/XGBoost ensemble averaging, holdout summary table, and fit-metric reporting."""
 
 import logging
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error
 
-from chile_forecast.config import HOLDOUT_N
+from chile_forecast.config import FREQ, HOLDOUT_N
 from chile_forecast.metrics import calc_fit_metrics
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def build_holdout_row(
     preds_xgb_eval = preds_xgb[:min_len]
     preds_ensemble_eval = (preds_deepar_eval + preds_xgb_eval) / 2
 
-    dates = pd.date_range(holdout_start, periods=HOLDOUT_N, freq="ME")
+    dates = pd.date_range(holdout_start, periods=HOLDOUT_N, freq=FREQ)
 
     for i, dt in enumerate(dates):
         month_str = f"{dt:%Y}M{dt.month:02d}"

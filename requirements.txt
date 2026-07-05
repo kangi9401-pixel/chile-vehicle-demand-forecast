@@ -1,12 +1,12 @@
-numpy
-pandas
-matplotlib
-scikit-learn
-xgboost
-gluonts
-torch
-lightning
-openpyxl
-pytest
+numpy==2.0.2
+pandas==2.3.3
+matplotlib==3.9.4
+scikit-learn==1.6.1
+xgboost==2.1.4
+gluonts==0.16.3
+torch==2.8.0
+lightning==2.6.0
+openpyxl==3.1.5
+pytest==8.4.2
 
 -e .

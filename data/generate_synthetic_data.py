@@ -56,7 +56,7 @@ def generate(seed: int = SEED) -> pd.DataFrame:
     economic_index = (
         3.0 * middle_high_income_ratio
         - 0.02 * interest_rate
-        + 0.00002 * (copper - copper.mean())
+        + 0.00002 * (avg_resource_price - avg_resource_price.mean())
     )
     economic_index = economic_index - economic_index.min() + 0.5
 
