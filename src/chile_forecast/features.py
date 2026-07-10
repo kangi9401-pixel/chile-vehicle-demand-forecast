@@ -44,9 +44,14 @@ def build_feature_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     used as DeepAR/XGBoost covariates, mirroring the original pipeline's feature block."""
     raw_df = raw_df.copy()
 
-    raw_df["avg_resource_price"] = raw_df[
-        ["Crude_Oil_USD_per_Barrel", "Iron_Ore_USD_per_Ton", "Copper_USD_per_Ton"]
-    ].mean(axis=1)
+    # Crude oil (~USD/barrel, tens), iron ore (~USD/ton, tens-hundreds) and copper
+    # (~USD/ton, thousands) live on very different scales, so an unweighted mean is
+    # dominated almost entirely by copper. Z-score each series first so the
+    # composite actually reflects all three commodities rather than being a
+    # thin proxy for the copper price alone.
+    resource_cols = ["Crude_Oil_USD_per_Barrel", "Iron_Ore_USD_per_Ton", "Copper_USD_per_Ton"]
+    resource_z = (raw_df[resource_cols] - raw_df[resource_cols].mean()) / raw_df[resource_cols].std()
+    raw_df["avg_resource_price"] = resource_z.mean(axis=1)
 
     raw_df["middle_high_income_ratio"] = (
         raw_df["Middle"] + raw_df["High"]

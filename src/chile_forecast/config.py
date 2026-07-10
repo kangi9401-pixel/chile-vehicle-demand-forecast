@@ -33,3 +33,9 @@ HOLDOUT_N = 3
 
 BOLL_WINDOW = 20
 BOLL_K = 2
+
+# Hyperparameter search is run once on this representative segment (the aggregate
+# market) rather than per segment -- with ~100 monthly observations per series,
+# per-segment search would just overfit the search itself to each series' noise.
+TUNING_SEGMENT = "Total Market Size"
+VAL_N = 6  # months held out for DeepAR hyperparameter validation, just before HOLDOUT_N

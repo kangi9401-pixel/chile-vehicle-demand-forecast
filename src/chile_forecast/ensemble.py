@@ -13,20 +13,43 @@ from chile_forecast.metrics import calc_fit_metrics
 logger = logging.getLogger(__name__)
 
 
+def compute_ensemble_weights(rolling_df: pd.DataFrame) -> Dict[str, float]:
+    """Per-segment weight on DeepAR (XGBoost gets `1 - weight`), inverse-MAE weighted
+    from the rolling-origin backtest -- i.e. whichever model was more accurate across
+    the backtest origins for that segment gets more say, instead of an arbitrary 50/50
+    split. Falls back to 0.5 for any segment missing from `rolling_df` or with a
+    zero/undefined MAE."""
+    weights: Dict[str, float] = {}
+    if rolling_df.empty:
+        return weights
+
+    for seg, grp in rolling_df.groupby("Segment"):
+        mae_deepar = grp["MAE_DeepAR"].mean()
+        mae_xgb = grp["MAE_XGBoost"].mean()
+        if not np.isfinite(mae_deepar) or not np.isfinite(mae_xgb) or (mae_deepar + mae_xgb) == 0:
+            weights[seg] = 0.5
+            continue
+        inv_deepar, inv_xgb = 1 / max(mae_deepar, 1e-9), 1 / max(mae_xgb, 1e-9)
+        weights[seg] = inv_deepar / (inv_deepar + inv_xgb)
+
+    return weights
+
+
 def build_holdout_row(
     seg: str,
     y_test: np.ndarray,
     preds_deepar: np.ndarray,
     preds_xgb: np.ndarray,
     holdout_start: pd.Timestamp,
+    weight_deepar: float = 0.5,
 ) -> Dict:
-    row: Dict = {"Segment": seg}
+    row: Dict = {"Segment": seg, "Weight_DeepAR": weight_deepar}
 
     min_len = min(len(y_test), len(preds_deepar), len(preds_xgb))
     y_test_eval = y_test[:min_len]
     preds_deepar_eval = preds_deepar[:min_len]
     preds_xgb_eval = preds_xgb[:min_len]
-    preds_ensemble_eval = (preds_deepar_eval + preds_xgb_eval) / 2
+    preds_ensemble_eval = weight_deepar * preds_deepar_eval + (1 - weight_deepar) * preds_xgb_eval
 
     dates = pd.date_range(holdout_start, periods=HOLDOUT_N, freq=FREQ)
 
@@ -36,7 +59,7 @@ def build_holdout_row(
         row[f"{month_str}_DeepAR"] = preds_deepar[i] if i < len(preds_deepar) else np.nan
         row[f"{month_str}_XGB"] = preds_xgb[i] if i < len(preds_xgb) else np.nan
         row[f"{month_str}_Ensemble"] = (
-            (preds_deepar[i] + preds_xgb[i]) / 2
+            weight_deepar * preds_deepar[i] + (1 - weight_deepar) * preds_xgb[i]
             if i < len(preds_deepar) and i < len(preds_xgb)
             else np.nan
         )
