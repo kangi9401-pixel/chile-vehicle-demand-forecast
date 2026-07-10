@@ -81,6 +81,10 @@ SUV categories).
 
 ## Getting started
 
+macOS only: XGBoost's multiprocess hyperparameter search (`n_jobs=-1` in
+`tuning.py`) needs OpenMP, which isn't bundled — `brew install libomp` first,
+or XGBoost worker processes will fail to load.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
