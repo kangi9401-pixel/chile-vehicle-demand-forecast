@@ -2,245 +2,241 @@
 
 ## 1. Problem Statement
 
-Vehicle demand in an emerging, export-driven economy like Chile is shaped by two
-distinct dynamics: slow-moving structural trends in the consumer base (income
-distribution, population growth) and faster macro cycles (interest rates,
-commodity prices, which drive a large share of Chilean GDP and household income).
-The goal of this project is to forecast monthly new-vehicle sales at the total-market
-level and across ten sub-segments (brand, body style), both for near-term accuracy
-(a 3-month holdout) and for a multi-year planning horizon, and to do so in a way
-that is honest about which part of the forecast is driven by learned structure
-versus by a static assumption about the future.
+Monthly new-vehicle demand in an export-driven economy like Chile mixes slow structural
+drivers (income distribution, population), faster macro cycles (interest rates,
+commodity prices) and strong seasonality. This project asks two questions:
 
-**Data disclaimer:** this repository uses a seeded synthetic dataset
-(`data/generate_synthetic_data.py`) built to have the same shape and plausible
-economic relationships as the real project this reproduces, not actual sales
-figures. All numbers in this report are therefore about the *method*, not about
-the Chilean auto market.
+1. Once preprocessing and model selection are free of look-ahead leakage, do DeepAR,
+   XGBoost or their ensemble actually beat simple seasonal baselines, and how does that
+   depend on the segment and the forecast horizon?
+2. Given those forecasts, does a constraint-aware promotion-budget allocation produce
+   more net incremental profit than allocation rules that follow demand alone?
 
-## 2. Method and Why It Was Chosen
+**Data disclaimer:** all data is seeded synthetic data
+(`data/generate_synthetic_data.py`, seed 42; promotion inputs in
+`src/chile_forecast/promotion_response.py`). Every number here describes the *method* on
+synthetic data, not the Chilean auto market or any company's results.
 
-Two models are trained per segment and combined in an ensemble:
+**Relationship to the original project:** the original internal model used a single
+DeepAR+XGBoost combination. Model comparison, the seasonal-naive baseline,
+rolling-origin backtesting and the macro covariates were added in this independent
+rebuild on synthetic data.
 
-- **DeepAR** (`gluonts`, PyTorch): an autoregressive RNN that learns a full
-  predictive distribution (Student-t) per time step and takes the macro
-  covariates as dynamic real-valued inputs. It captures autocorrelation and
-  seasonality in the series itself, and extrapolates naturally to arbitrary
-  horizons via its recurrent structure. Its main weakness for this data is that
-  it has only ~100 monthly observations per segment to learn from -- a fairly
-  small sample for a neural sequence model.
-- **XGBoost**: a gradient-boosted tree regressor trained purely on the macro
-  feature set (no lagged target values), which tends to generalize better than
-  DeepAR when the series itself is short or noisy, at the cost of not modeling
-  autocorrelation directly.
-- **Ensemble**: a weighted average of the two, with the weight chosen per
-  segment from out-of-sample backtest performance (Section 4.3) rather than a
-  fixed 50/50 split.
+## 2. Data
 
-Classical alternatives considered but not used: ARIMA/SARIMA (would need a
-separate model per exogenous-feature specification and doesn't share statistical
-strength across segments as naturally as a covariate-driven learner), and
-Prophet (weaker support for multivariate dynamic covariates than DeepAR here).
-Given the project's goal of comparing a deep sequence model against a
-feature-driven model, DeepAR + XGBoost was the more informative pair to study.
+The generator produces 125 months (2015-01 to 2025-05) of population, low/middle/high
+income counts, interest rate, crude oil / iron ore / copper prices and ten market and
+segment sales series with seasonality, trend, macro effects and noise. The evaluation
+uses the four body-style segments **B-Sedan, B_HB, SUV-A and SUV-B**. SUV-A and SUV-B
+start with 24 and 36 missing months respectively, mimicking later product launches;
+each series is evaluated on its observed span.
 
-## 3. Data and Feature Engineering
+## 3. Method
 
-Macro covariates: population, income-tier splits (Low/Middle/High), interest
-rate, and three commodity prices (crude oil, iron ore, copper), from which the
-pipeline derives `middle_high_income_ratio`, `avg_resource_price`, and five
-cross-ratios between them (see `src/chile_forecast/features.py`).
+### 3.1 Models
 
-**A worked example of why feature engineering needs checking, not just writing:**
-the initial version of `avg_resource_price` was an unweighted mean of the three
-commodity prices. Because crude oil (~USD 20-120/barrel) and iron ore (~USD
-30-180/ton) are one to two orders of magnitude smaller than copper (~USD
-3,500-11,000/ton), that mean was in practice a thin proxy for the copper price
-alone -- oil and iron barely moved it. The fix z-scores each series before
-averaging, so the composite reflects genuine co-movement across all three
-commodities. `tests/test_features.py::test_avg_resource_price_is_invariant_to_a_single_column_rescale`
-encodes this directly: multiplying copper by 100 (a stand-in for a unit change)
-must not move `avg_resource_price` at all under the z-scored version, and did
-move it substantially under the original unweighted mean.
+| Model | Description |
+|---|---|
+| `LastValue` | Repeats the last training observation |
+| `SeasonalNaive` | Value from the same month one year earlier |
+| `MovingAverage6` | Mean of the last six training months |
+| `XGBoost` | 150 trees, seed 42, on leakage-safe macro, calendar (month sine/cosine) and trend features; no target lags |
+| `DeepAR` | GluonTS/PyTorch, 24 hidden units, 2 layers, lr 1e-3, 2 epochs, with the same leakage-safe features as dynamic covariates |
+| `LeakageSafeEnsemble` | `w·DeepAR + (1−w)·XGBoost`, `w = MAE_XGB / (MAE_DeepAR + MAE_XGB)` using 12-month MAE from strictly earlier origins only; `w = 0.5` at the first origin |
 
-Ten market segments are modeled independently (total industry size, two OEM
-brands, four body styles, two SUV categories introduced partway through
-history). Each segment's longest usable contiguous history is found
-automatically (`get_longest_non_nan_slice`) and requires at least
-`MIN_SERIES_LEN` (60) months before it's modeled at all.
+DeepAR is deliberately small: with roughly 100 monthly observations per series, extra
+capacity adds runtime and overfitting risk rather than evidence. Python, NumPy and Torch
+seeds are fixed at 42 and the Lightning trainer runs in deterministic mode; a test
+checks that two DeepAR runs on the same input produce identical predictions.
 
-## 4. Experimental Design
+### 3.2 Leakage-safe preprocessing
 
-### 4.1 Hyperparameter search
+`LeakageSafePreprocessor` is fitted separately at every origin with training cutoff *t*:
 
-XGBoost is tuned with `RandomizedSearchCV` over `n_estimators`, `max_depth`,
-`learning_rate`, `subsample`, `colsample_bytree`, scored by MAE under
-`TimeSeriesSplit` (expanding-window, so no fold is ever validated against data
-that precedes its own training fold). DeepAR is tuned with a small manual grid
-over `hidden_size`, `num_layers`, `lr`, each scored by MAE on a held-out
-`VAL_N`-month window that sits strictly between the training data and the final
-holdout window -- it never sees the final test window's target values.
+- imputation medians and the mean/std used to z-score income, interest rate and each
+  commodity price come only from rows with date ≤ *t*;
+- evaluation rows are transformed with those training statistics;
+- unknown future macro values are **not** read from the evaluation window — they are
+  held at their last training value, and only calendar and trend features advance;
+- ratio features that divided by a commodity z-score (which crosses zero and made the
+  ratios explode) are not used.
 
-Both searches run once, on a single representative segment (`Total Market
-Size`, `config.TUNING_SEGMENT`), rather than per segment. With only ~100
-observations per series, a per-segment search would mostly fit hyperparameters
-to that series' particular noise rather than finding settings that generalize;
-tuning once on the aggregate market and reusing those settings everywhere is a
-deliberate bias-variance tradeoff, not an oversight. See
-`outputs/xgb_tuning_results.csv` and `outputs/deepar_tuning_results.csv` for
-the full search results.
+`tests/test_decision_system.py::test_future_rows_cannot_change_training_preprocessing`
+corrupts future macro values (copper ×1,000,000, interest rate −999) and asserts that
+the training and forecast features do not change.
 
-**Chosen hyperparameters** (from this run; re-running `data/generate_synthetic_data.py`
-re-seeds the data, so a fresh run's numbers will differ slightly):
+### 3.3 Backtest design
 
-- XGBoost: `{'subsample': 0.9, 'n_estimators': 300, 'max_depth': 5, 'learning_rate': 0.1, 'colsample_bytree': 0.8}`
-  (best of 25 random draws, rank 1 mean CV MAE -2082.2, std 375.1; rank-2 candidate
-  `{'n_estimators': 200, 'max_depth': 3, 'learning_rate': 0.01, ...}` scored -2086.5,
-  i.e. within noise of rank 1 -- the search is fairly flat near the optimum, not a sharp peak).
-- DeepAR: `{'hidden_size': 64, 'num_layers': 2, 'lr': 0.0005}` (best of 4 configs, validation
-  MAE 1506.8, vs. 1520.4 / 1729.6 / 2186.7 for the others -- lower learning rate helped
-  more than a wider or deeper network did).
+All models share **8 training cutoffs**, 3 months apart: 2022-08-31, 2022-11-30,
+2023-02-28, 2023-05-31, 2023-08-31, 2023-11-30, 2024-02-29 and 2024-05-31. At each
+cutoff every model makes one 12-month forecast, which is scored on its first **3, 6 and
+12 months**, so every model sees exactly the same training data and target dates at
+every horizon. This gives 4 segments × 8 origins × 3 horizons × 6 models = 576 metric
+rows and 4,032 prediction rows (`forecast_metrics_by_origin.csv`,
+`forecast_predictions.csv`).
 
-### 4.2 Rolling-origin (walk-forward) backtest
+### 3.4 Metrics
 
-A single 3-month holdout is one noisy draw and can't distinguish genuine
-generalization from a lucky window. `src/chile_forecast/backtest.py` repeats the
-holdout evaluation at 3 origins, each 3 months further back, for every segment,
-and reports MAE mean +/- std across origins rather than a single number.
+MAE, RMSE, **WAPE** (Σ|actual − forecast| / Σ|actual|, the headline metric), sMAPE, and
+MASE scaled by the in-sample seasonal-naive error. Plain MAPE is not reported because it
+is unstable near zero. Adjacent windows overlap by 9 months, so the spread across origins
+describes variability but does not support independence-based significance tests.
 
-### 4.3 Ensemble weighting
+## 4. Relationship to This Repository's Earlier Version
 
-The per-segment DeepAR weight is `(1/MAE_DeepAR) / (1/MAE_DeepAR + 1/MAE_XGBoost)`,
-using each model's mean MAE across the rolling-origin backtest for that segment
--- so a segment where DeepAR was consistently more accurate leans the ensemble
-toward DeepAR, and vice versa, instead of assuming both models are equally
-trustworthy everywhere.
+An earlier public version of this repository evaluated DeepAR, XGBoost and an
+inverse-MAE ensemble on a single 3-month holdout plus 3 rolling origins, with MAE as the
+only backtest metric and no baseline. An audit ([AUDIT_KO.md](AUDIT_KO.md)) found that
+commodity prices were z-scored over the full 125 months before splitting, that
+backtests used the evaluation window's actual macro values, and that ensemble weights
+could include the origin being evaluated. Those earlier results are therefore not
+comparable to the ones below and are not repeated here. The earlier workflow remains
+available as `pipeline.run_legacy()` for traceability.
 
-### 4.4 Interpretability
+## 5. Forecast Results
 
-XGBoost is the interpretable half of the ensemble (DeepAR doesn't have an
-established SHAP-equivalent attribution method for an autoregressive RNN over a
-learned latent state). `src/chile_forecast/interpret.py` produces a SHAP
-beeswarm plot per segment (`outputs/<segment>_shap_summary.png`).
+All numbers are read from `outputs/decision_system/forecast_metrics_summary.csv` and
+`forecast_improvement_vs_seasonal.csv`, produced by `python run_pipeline.py`.
 
-## 5. Results
+### 5.1 Mean WAPE across segments
 
-### 5.1 Rolling-origin backtest (mean +/- std MAE across up to 3 origins)
+| Model | 3 months | 6 months | 12 months |
+|---|---:|---:|---:|
+| LeakageSafeEnsemble | **13.80%** | **14.48%** | **14.98%** |
+| DeepAR | 14.70% | 15.29% | 15.91% |
+| MovingAverage6 | 14.88% | 15.96% | 15.90% |
+| XGBoost | 15.20% | 15.87% | 16.21% |
+| SeasonalNaive | 18.38% | 18.46% | 18.47% |
+| LastValue | 18.68% | 20.56% | 20.51% |
 
-| Segment | DeepAR | XGBoost | 50/50 Ensemble |
-|---|---|---|---|
-| Anac Market Size | 1733.3 ± 612.7 | 2213.2 ± 1065.1 | 1896.5 ± 708.2 |
-| Total Market Size | 1939.0 ± 1022.2 | 2095.0 ± 1152.0 | 1982.3 ± 635.4 |
-| OEM_A | 193.2 ± 136.4 | 222.5 ± 126.7 | 175.9 ± 89.6 |
-| OEM_B | 265.0 ± 72.8 | 242.6 ± 78.0 | 213.4 ± 69.3 |
-| B-Sedan | 258.0 ± 145.7 | 259.8 ± 141.8 | 246.8 ± 36.7 |
-| B_HB | 317.3 ± 159.1 | 430.5 ± 128.2 | 359.2 ± 120.6 |
-| C_Sedan | 377.2 ± 115.5 | 345.3 ± 222.1 | 341.9 ± 76.9 |
-| C_HB | 333.1 ± 143.7 | 301.9 ± 29.4 | 305.9 ± 81.9 |
-| SUV-A | 347.9 ± 91.4 | 291.0 ± 122.7 | 300.6 ± 129.5 |
-| SUV-B | 137.2 ± 14.7 | 221.3 ± 91.1 | 118.0 ± 25.6 |
+On the segment average, the ensemble's WAPE is 24.9%, 21.5% and 18.9% lower than
+Seasonal Naive at 3, 6 and 12 months.
 
-On the rolling backtest, the plain 50/50 ensemble beats *both* individual models outright
-in 5 of 10 segments (Anac, Total, OEM_A, B-Sedan, SUV-B) and beats the worse of the two
-everywhere -- consistent with the standard variance-reduction argument for averaging two
-models with partially uncorrelated errors. The std columns are also informative on their
-own: OEM_B and SUV-B have tight, low-variance MAE across origins (both models are stably
-accurate), while Anac and Total Market Size have std comparable to or larger than half
-their mean MAE -- i.e. accuracy on these two swings a lot depending on which 3 months you
-happen to test on. That instability is exactly why a single 3-month holdout (Section 5.2)
-is not sufficient evidence of generalization for these two segments in particular.
+### 5.2 WAPE by segment and horizon
 
-### 5.2 Final holdout (last 3 months), backtest-weighted ensemble vs. individual models
+**3 months**
 
-| Segment | Weight(DeepAR) | DeepAR MAE | XGBoost MAE | Weighted Ensemble MAE | Beat both? |
-|---|---|---|---|---|---|
-| Anac Market Size | 0.56 | 2940.50 | 1148.74 | 1951.25 | No |
-| Total Market Size | 0.52 | 1622.53 | 1044.47 | 1244.65 | No |
-| OEM_A | 0.54 | 300.94 | 131.03 | 219.32 | No |
-| OEM_B | 0.48 | 248.96 | 169.54 | **154.39** | **Yes** |
-| B-Sedan | 0.50 | 168.45 | 216.71 | 192.50 | No |
-| B_HB | 0.58 | 221.97 | 283.49 | 248.08 | No |
-| C_Sedan | 0.48 | 532.55 | 159.20 | 301.45 | No |
-| C_HB | 0.48 | 153.67 | 268.95 | 214.14 | No |
-| SUV-A | 0.46 | 401.27 | 284.41 | 337.64 | No |
-| SUV-B | 0.62 | 121.89 | 158.25 | 135.80 | No |
+| Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
+|---|---:|---:|---:|---:|---:|---:|
+| B-Sedan | 17.49 | 14.38 | 12.49 | 11.40 | 12.79 | **11.25** |
+| B_HB | 17.06 | 16.04 | 12.65 | 13.14 | 11.99 | **11.79** |
+| SUV-A | 15.84 | 16.61 | 15.48 | 14.59 | 14.30 | **13.90** |
+| SUV-B | 24.32 | 26.48 | 18.91 | 21.68 | 19.73 | **18.27** |
 
-**This is the honest, less flattering result, and it's worth stating plainly rather than
-rounding up:** on this particular final 3-month window, the weighted ensemble beat *both*
-individual models outright in only 1 of 10 segments (OEM_B). In every other segment it
-landed between DeepAR and XGBoost, as a weighted average of two point predictions
-necessarily tends to -- usually much closer to XGBoost, which was the stronger model on
-this window in 8 of 10 segments. Two things are going on:
+**6 months**
 
-1. **XGBoost happened to be unusually strong on this specific 3-month window** (e.g. Anac
-   XGBoost MAE 1148.74 vs. its own rolling-backtest average of 2213.2 -- nearly half). The
-   rolling-origin results (5.1) show this window was not representative of typical
-   accuracy for either model on several segments.
-2. **The ensemble weight is set from rolling-backtest MAE, and Section 5.1 already shows
-   that MAE is high-variance for exactly the segments (Anac, Total) where the ensemble
-   underperforms most here.** A weight estimated from a noisy signal inherits that noise.
+| Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
+|---|---:|---:|---:|---:|---:|---:|
+| B-Sedan | 19.40 | 15.31 | 14.24 | **11.60** | 13.79 | 11.91 |
+| B_HB | 18.32 | 15.97 | 13.15 | 12.54 | 11.99 | **11.58** |
+| SUV-A | 19.74 | 16.73 | 17.43 | 16.22 | 16.58 | **15.78** |
+| SUV-B | 24.79 | 25.82 | 19.01 | 23.14 | 18.78 | **18.66** |
 
-The practical takeaway: the ensemble is a reasonable *default* when you don't know in
-advance which model will do better on a given future window (it never does worse than the
-worse model, and did best overall on the rolling backtest), but "ensembling helps" is not
-a safe claim to make from a single holdout window -- which is precisely the failure mode
-rolling-origin backtesting exists to catch, and did catch here.
+**12 months**
 
-### 5.3 Feature importance
+| Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
+|---|---:|---:|---:|---:|---:|---:|
+| B-Sedan | 16.50 | 14.27 | 13.01 | **11.13** | 14.66 | 12.17 |
+| B_HB | 18.41 | 16.94 | 14.03 | 13.14 | 13.15 | **12.59** |
+| SUV-A | 20.94 | 17.08 | 17.00 | **15.85** | 18.28 | 16.32 |
+| SUV-B | 26.20 | 25.58 | 19.56 | 24.70 | **17.57** | 18.85 |
 
-For `Total Market Size`, SHAP ranks `middle_high_income_ratio` and
-`interest_rate` as the two most influential features, ahead of the raw
-`middle_income` level and `avg_resource_price` -- the five engineered
-cross-ratios contribute comparatively little. This is a useful empirical check
-on the feature engineering: most of the derived ratio features could likely be
-dropped with little accuracy cost, which the current feature set does not do
-(see Limitations).
+**The ensemble was not always better, and the best model differed by segment and
+horizon.** The ensemble is best in all four segments at 3 months and in three at 6
+months. At 12 months it is best only for B_HB; XGBoost wins B-Sedan and SUV-A, and
+DeepAR wins SUV-B. Relative to Seasonal Naive at 12 months, the best model improves
+WAPE by 21.98% (B-Sedan), 25.68% (B_HB), 7.18% (SUV-A) and 31.33% (SUV-B). At the same
+horizon, DeepAR is worse than Seasonal Naive for B-Sedan (14.66% vs 14.27%, −2.70%) and
+SUV-A (18.28% vs 17.08%, −7.06%), and the ensemble is worse than XGBoost alone for those
+two segments. On this data, a small neural model is not uniformly better than a
+seasonal rule. An operational setup would need per-segment champion/challenger tracking
+rather than one model for everything.
 
-![SHAP summary for Total Market Size](../outputs/Total_Market_Size_shap_summary.png)
+![Forecast horizon comparison](../outputs/decision_system/horizon_performance.png)
 
-## 6. Limitations and Future Work
+### 5.3 Feature importance (legacy workflow)
 
-- **The backtest-weighted ensemble beat both individual models on the final holdout in
-  only 1 of 10 segments** (Section 5.2), even though it was the best performer on average
-  across the rolling-origin backtest (Section 5.1). The weight is estimated from
-  rolling-backtest MAE, which Section 5.1 shows is itself high-variance for several
-  segments (e.g. Anac Market Size: std comparable to the mean) -- so the weight estimate
-  inherits that noise, and a single future 3-month window is not guaranteed to land where
-  the backtest average would predict. This is the single most important empirical result
-  in this report: it's evidence *against* trusting ensemble weights (or any accuracy claim)
-  derived from a small number of backtest windows, and the honest fix is more backtest
-  origins and/or a wider validation window, not a more sophisticated weighting formula.
-- **Forecast-horizon macro features are held at their last observed value.**
-  `run_deepar_longterm` has no real future macro data to condition on, so it
-  forward-fills interest rate, income, and commodity prices flat for the entire
-  multi-year horizon. This means the long-term forecast is closer to "if the
-  economy stayed exactly where it last was" than a macro forecast in its own
-  right, and the DeepAR covariates buy comparatively little beyond what the
-  model's own trend/seasonality extrapolation would give it that far out. A
-  proper fix would feed in a macro *scenario* (e.g. a simple VAR or
-  analyst-provided path for interest rates and commodity prices) rather than a
-  flat line, and report the forecast's sensitivity to that scenario.
-- **DeepAR's internal checkpoint selection still monitors training loss**, not a
-  held-out validation loss -- that's a `gluonts`/Lightning library default we
-  did not override, since doing so reliably would have meant reworking the
-  `ModelCheckpoint` wiring inside `PyTorchLightningEstimator.train_model`, which
-  felt like the wrong place to spend risk given the rest of the scope here.
-  Instead, generalization is checked *externally*: the hyperparameter search
-  scores on a held-out window (Section 4.1), and the rolling-origin backtest
-  (Section 4.2) checks that accuracy holds up across several time origins, not
-  just the one the checkpoint happens to fit best.
-- **Hyperparameters are tuned once on one segment and reused everywhere**
-  (Section 4.1). This is a deliberate scoping decision, not a discovery, but it
-  means segment-specific architecture choices are never explored.
-- **The ensemble is a linear weighted average**, not a stacked/learned combiner.
-  A logistic or gradient-boosted stacker over the two models' predictions (with
-  the rolling-backtest windows as training data for the stacker) would likely
-  do better and is the most natural next step.
-- **Feature engineering includes five cross-ratio features** whose SHAP
-  contribution (Section 5.3) is small relative to the four base features. They
-  were kept for continuity with the original project's feature set rather than
-  pruned; a follow-up ablation (train with vs. without each engineered ratio)
-  would make this precise instead of qualitative.
-- **Synthetic data.** All results here describe what the pipeline does on
-  seeded synthetic data with known-plausible relationships baked in; they are
-  not a claim about real Chilean vehicle demand or real forecast accuracy.
+SHAP attribution is computed only in the legacy workflow (`run_legacy()`,
+`interpret.py`). It uses that workflow's feature set, which still includes the
+resource-price ratio features removed from the current pipeline, and it has not been
+recomputed for the leakage-safe pipeline. For `Total Market Size`, it ranks
+`middle_high_income_ratio` and `interest_rate` highest, followed by `middle_income` and
+`avg_resource_price`. The engineered cross-ratios contribute comparatively little,
+which is consistent with dropping the unstable ratio features. Treat this as a
+qualitative check on the synthetic generator's built-in relationships, not as evidence
+about real demand drivers.
+
+![SHAP summary for Total Market Size (legacy workflow)](sample_shap_summary.png)
+
+## 6. Promotion-Budget Optimization
+
+### 6.1 Formulation
+
+Five synthetic models (City Hatchback, Compact Sedan, Compact SUV, Family SUV, and a
+Legacy Diesel SUV that regulation forbids selling) receive the latest leakage-safe
+forecast as base demand, plus inventory, supply, factory capacity, lifecycle, price,
+tariff-adjusted cost, unit margin, strategic weight and min/max budget. Units are
+million Chilean pesos (MCLP).
+
+Each model's spend is split into three tiers of 35, 45 and 55 MCLP with declining
+incremental units per MCLP. For example, the Compact SUV tiers are 0.34, 0.22 and 0.11
+units/MCLP. These slopes are assumptions, not estimates. With spend `x_ij`, slope
+`r_ij`, unit margin `m_i`, lifecycle bonus `a_i` (phase-out 0.45, mature 0.10, growth 0)
+and strategic weight `w_i`, `scipy.optimize.linprog` (HiGHS) maximizes
+
+```
+Σ_ij x_ij · ( r_ij · (m_i + a_i) · w_i − 1 )
+```
+
+subject to: total budget ≤ 300 MCLP; per-model min/max budgets; base demand plus
+incremental units ≤ inventory plus supply; per-factory production ≤ capacity; and zero
+spend on the regulated model. The reported net incremental profit is the unweighted
+`Σ r_ij·x_ij·m_i − Σ x_ij`, so strategic weights do not inflate the financial figure.
+Equal, forecast-share and prior-year-share heuristics are evaluated under the same
+bounds and constraint checks.
+
+### 6.2 Results
+
+From `allocation_strategy_comparison.csv` and `constraint_checks.csv`:
+
+| Strategy | Budget (MCLP) | Incremental units | Net incremental profit (MCLP) | All constraints met |
+|---|---:|---:|---:|:---:|
+| Equal | 300.00 | 71.50 | 138.27 | yes |
+| Forecast share | 300.00 | 69.99 | 121.28 | yes |
+| Prior-year share | 300.00 | 70.83 | 130.03 | yes |
+| Optimized | **275.00** | 68.00 | **148.57** | yes |
+
+The optimizer spends 275 MCLP (City Hatchback 35, Compact Sedan 80, Compact SUV 80,
+Family SUV 80, Legacy Diesel SUV 0) and leaves 25 MCLP unused, because the remaining
+tiers return less contribution than they cost under the assumed margins. It produces
+3.5 fewer incremental units than equal allocation, but 7.45%, 22.5% and 14.26% more net
+incremental profit than the equal, forecast-share and prior-year-share rules. So
+maximizing volume and maximizing profit give different allocations.
+
+Demand scenarios scale base demand by 0.85 / 1.00 / 1.15, capped at 96% of inventory
+plus supply (`scenario_summary.csv`). The downside and base scenarios have the same
+optimum (275 MCLP, 148.57 MCLP profit). In the upside scenario, base demand uses more
+factory capacity, so the optimal spend *falls* to 184.11 MCLP (51.04 incremental units,
+124.59 MCLP profit). Stronger demand does not automatically justify more promotion when
+supply binds.
+
+![Scenario allocation](../outputs/decision_system/scenario_budget_allocations.png)
+
+## 7. Limitations and Future Work
+
+- **Synthetic data and an assumed response function.** The results show that the
+  method works, but have no external validity. The optimum is only as good as the
+  assumed tier slopes; real use would need experimental or quasi-experimental estimates
+  of promotion response.
+- **Flat future macro covariates.** Holding macro values at their last observation
+  avoids leakage but is not a realistic path. A proper backtest would use
+  forecast vintages that were available at each origin.
+- **Small DeepAR.** About 100 observations per series and 2 epochs make this a
+  structural comparison, not a statement about neural forecasters in general.
+- **Overlapping windows.** The 8 origins overlap, so errors are correlated across
+  origins.
+- **Deterministic scenarios.** Three point scenarios, no chance constraints, CVaR or
+  distributionally robust optimization, and no forecast-value-added analysis of whether
+  better accuracy changes the allocation.
+- **Legacy SHAP.** Feature attribution (Section 5.3) was not recomputed for the
+  leakage-safe feature set.
