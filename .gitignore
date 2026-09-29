@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+.pycache/
 lightning_logs/
 checkpoints/
-outputs/
+*.ckpt
+outputs/*
+!outputs/decision_system/
 .DS_Store
