@@ -8,6 +8,8 @@ backtest and the hyperparameter search).
 """
 
 import logging
+import tempfile
+import warnings
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -16,7 +18,7 @@ import torch
 from gluonts.dataset.common import ListDataset
 from gluonts.torch.model.deepar import DeepAREstimator
 
-from chile_forecast.config import DATE_COL, FORECAST_STEP, FREQ, HOLDOUT_N, MACRO_COLS_FOR_DEEPAR
+from chile_forecast.config import DATE_COL, FORECAST_STEP, FREQ, HOLDOUT_N, MACRO_COLS_FOR_DEEPAR, RANDOM_SEED
 from chile_forecast.features import create_time_features
 
 # torch >=2.6 defaults `torch.load(weights_only=True)`, which rejects the
@@ -39,6 +41,14 @@ def _unrestricted_torch_load(*args, **kwargs):
 torch.load = _unrestricted_torch_load
 
 logger = logging.getLogger(__name__)
+
+# GluonTS 0.16 emits this PyTorch 2.9 migration warning once per training batch;
+# it is not actionable for this pinned environment and otherwise obscures results.
+warnings.filterwarnings(
+    "ignore",
+    message="Using a non-tuple sequence for multidimensional indexing.*",
+    category=UserWarning,
+)
 
 
 def build_feat_dynamic_real(
@@ -75,6 +85,11 @@ def train_and_forecast(
     beyond it. `feat_dynamic_real_full` must have `len(train_target) + prediction_length`
     columns (covariates for the training span plus the forecast horizon)."""
     deepar_kwargs = dict(deepar_kwargs or {})
+    # All stochastic libraries used by GluonTS/Lightning are fixed at the same seed.
+    import random
+    random.seed(RANDOM_SEED)
+    np.random.seed(RANDOM_SEED)
+    torch.manual_seed(RANDOM_SEED)
 
     train_ds = ListDataset(
         [{
@@ -93,18 +108,20 @@ def train_and_forecast(
         freq=FREQ,
     )
 
-    estimator = DeepAREstimator(
-        freq=FREQ,
-        prediction_length=prediction_length,
-        context_length=min(len(train_target), FORECAST_STEP * 2),
-        trainer_kwargs={
-            "max_epochs": max_epochs, "logger": False, "enable_progress_bar": False,
-            "accelerator": "cpu",
-        },
-        **deepar_kwargs,
-    )
-    predictor = estimator.train(train_ds)
-    forecast = next(iter(predictor.predict(test_ds)))
+    with tempfile.TemporaryDirectory(prefix="chile_forecast_deepar_") as checkpoint_dir:
+        estimator = DeepAREstimator(
+            freq=FREQ,
+            prediction_length=prediction_length,
+            context_length=min(len(train_target), FORECAST_STEP * 2),
+            trainer_kwargs={
+                "max_epochs": max_epochs, "logger": False, "enable_progress_bar": False,
+                "accelerator": "cpu", "deterministic": True, "enable_model_summary": False,
+                "default_root_dir": checkpoint_dir,
+            },
+            **deepar_kwargs,
+        )
+        predictor = estimator.train(train_ds)
+        forecast = next(iter(predictor.predict(test_ds)))
 
     return {
         "preds_mean": forecast.mean,

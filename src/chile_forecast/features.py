@@ -41,7 +41,7 @@ def create_time_features(dates: pd.Series, freq: str = FREQ) -> np.ndarray:
 
 def build_feature_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Derive the macro feature set (income ratios, resource-price ratios, etc.)
-    used as DeepAR/XGBoost covariates, mirroring the original pipeline's feature block."""
+    used as DeepAR/XGBoost covariates by the legacy (pre-audit) workflow, `run_legacy`."""
     raw_df = raw_df.copy()
 
     # Crude oil (~USD/barrel, tens), iron ore (~USD/ton, tens-hundreds) and copper

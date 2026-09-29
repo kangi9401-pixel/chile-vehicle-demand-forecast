@@ -1,4 +1,4 @@
-"""Observed + long-term forecast plotting with Bollinger-band uncertainty context."""
+"""Observed + long-term forecast plotting with the DeepAR prediction interval."""
 
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from chile_forecast.config import BOLL_K, BOLL_WINDOW, DATE_COL
+from chile_forecast.config import DATE_COL
 
 
 def plot_observed_and_forecast(
@@ -33,15 +33,6 @@ def plot_observed_and_forecast(
     fig, ax = plt.subplots(figsize=(15, 6))
     ax.plot(all_x, all_y, color="blue", lw=2, label="Observed + Forecast")
     ax.fill_between(all_x, all_low, all_up, color="orange", alpha=0.2, label="DeepAR 80% PI")
-
-    roll_mean = series_obs[seg].rolling(window=BOLL_WINDOW).mean()
-    roll_std = series_obs[seg].rolling(window=BOLL_WINDOW).std()
-    ax.fill_between(
-        series_obs[DATE_COL],
-        roll_mean - BOLL_K * roll_std,
-        roll_mean + BOLL_K * roll_std,
-        color="gray", alpha=0.15, label=f"Bollinger Band ±{BOLL_K}σ",
-    )
 
     ax.axvline(series_obs[DATE_COL].iloc[-1], ls="--", color="k", lw=1, label="Forecast Start")
     ax.set_title(f"{seg} – DeepAR Observed + Long-Term Forecast", fontsize=15)
