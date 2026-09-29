@@ -1,0 +1,4 @@
+scenario,total_budget_mclp,expected_sales,expected_incremental_sales,expected_revenue_mclp,expected_contribution_mclp,expected_incremental_profit_mclp
+base,275.0,18383.9,68.0,324598.25,106391.9167,148.5709
+downside,275.0,15636.515,68.0,276103.9145,90455.41483,148.5709
+upside,184.10606060606497,19588.0,51.04000000000087,345792.055,113450.82061939394,124.58509939394037

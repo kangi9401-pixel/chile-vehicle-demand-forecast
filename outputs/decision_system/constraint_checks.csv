@@ -1,0 +1,8 @@
+strategy,budget_ok,model_budget_bounds_ok,supply_inventory_ok,factory_capacity_ok,regulation_ok,all_constraints_ok,scenario
+Equal,True,True,True,True,True,True,
+ForecastShare,True,True,True,True,True,True,
+PriorYearShare,True,True,True,True,True,True,
+Optimized,True,True,True,True,True,True,
+Optimized,True,True,True,True,True,True,downside
+Optimized,True,True,True,True,True,True,base
+Optimized,True,True,True,True,True,True,upside

@@ -1,0 +1,16 @@
+model,tranche,width_mclp,incremental_units_per_mclp
+City Hatchback,1,35.0,0.31
+City Hatchback,2,45.0,0.2
+City Hatchback,3,55.0,0.1
+Compact Sedan,1,35.0,0.29
+Compact Sedan,2,45.0,0.18
+Compact Sedan,3,55.0,0.08
+Compact SUV,1,35.0,0.34
+Compact SUV,2,45.0,0.22
+Compact SUV,3,55.0,0.11
+Family SUV,1,35.0,0.27
+Family SUV,2,45.0,0.17
+Family SUV,3,55.0,0.08
+Legacy Diesel SUV,1,35.0,0.0
+Legacy Diesel SUV,2,45.0,0.0
+Legacy Diesel SUV,3,55.0,0.0
