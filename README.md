@@ -1,5 +1,7 @@
 # Chile Vehicle Demand Forecast
 
+[![CI](https://github.com/kangi9401-pixel/chile-vehicle-demand-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/kangi9401-pixel/chile-vehicle-demand-forecast/actions/workflows/ci.yml)
+
 A leakage-safe monthly demand-forecasting pipeline for four synthetic Chilean vehicle
 segments, plus a small linear-programming model that turns those forecasts into a
 promotion-budget allocation under inventory, supply, factory, regulatory and strategic
@@ -150,13 +152,14 @@ src/chile_forecast/
   promotion_response.py      Synthetic promotion inputs and diminishing response tiers
   optimization.py            Budget LP, heuristic strategies, constraint checks
   decision_visualization.py  Report charts
-  pipeline.py                run(): default pipeline; run_legacy(): pre-audit workflow
-  features.py, tuning.py, backtest.py, ensemble.py, interpret.py, visualize.py
-                             Legacy 3-month workflow (hyperparameter search, SHAP),
-                             kept for audit traceability
+  pipeline.py                run(): the default pipeline
+  legacy/                    Pre-audit 3-month workflow (run_legacy, hyperparameter
+                             search, SHAP), kept only for audit traceability
 run_pipeline.py              CLI entry point
 tests/                       Unit, leakage-invariance, reproducibility and smoke tests
+  legacy/                    Tests for the legacy workflow
 docs/                        Technical report (EN/KO) and audit notes
+.github/workflows/ci.yml     Data regeneration check, pytest and a pipeline smoke run
 ```
 
 ## Tech stack

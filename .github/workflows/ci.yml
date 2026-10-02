@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: pip
+
+      # CPU-only torch wheel: the default Linux wheel pulls several GB of CUDA libraries.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Synthetic data regenerates byte-for-byte
+        run: |
+          python data/generate_synthetic_data.py
+          git diff --exit-code -- data/synthetic_chile_data.csv
+
+      - name: Unit, leakage and reproducibility tests
+        run: pytest tests/ -q
+
+      - name: Pipeline smoke run (no DeepAR)
+        run: python run_pipeline.py --skip-deepar
