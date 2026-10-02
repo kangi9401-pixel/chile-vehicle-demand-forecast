@@ -91,7 +91,7 @@ commodity prices were z-scored over the full 125 months before splitting, that
 backtests used the evaluation window's actual macro values, and that ensemble weights
 could include the origin being evaluated. Those earlier results are therefore not
 comparable to the ones below and are not repeated here. The earlier workflow remains
-available as `pipeline.run_legacy()` for traceability.
+available as `chile_forecast.legacy.pipeline.run_legacy()` for traceability.
 
 ## 5. Forecast Results
 
@@ -156,8 +156,8 @@ rather than one model for everything.
 
 ### 5.3 Feature importance (legacy workflow)
 
-SHAP attribution is computed only in the legacy workflow (`run_legacy()`,
-`interpret.py`). It uses that workflow's feature set, which still includes the
+SHAP attribution is computed only in the legacy workflow
+(`chile_forecast/legacy/`, `run_legacy()` and `interpret.py`). It uses that workflow's feature set, which still includes the
 resource-price ratio features removed from the current pipeline, and it has not been
 recomputed for the leakage-safe pipeline. For `Total Market Size`, it ranks
 `middle_high_income_ratio` and `interest_rate` highest, followed by `middle_income` and

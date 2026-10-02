@@ -18,12 +18,15 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+# macOS: torch and xgboost each ship their own libomp. If xgboost's copy loads first,
+# DeepAR training later segfaults or deadlocks, so load torch's copy first.
+import torch  # noqa: F401
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 
 from chile_forecast.config import DATE_COL
-from chile_forecast.deepar_model import run_deepar_window
+from chile_forecast.legacy.deepar_windows import run_deepar_window
 
 logger = logging.getLogger(__name__)
 

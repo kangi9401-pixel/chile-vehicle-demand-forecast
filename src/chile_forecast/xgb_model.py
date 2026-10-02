@@ -4,6 +4,9 @@ from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
+# macOS: torch and xgboost each ship their own libomp. If xgboost's copy loads first,
+# DeepAR training later segfaults or deadlocks, so load torch's copy first.
+import torch  # noqa: F401
 import xgboost as xgb
 
 DEFAULT_XGB_PARAMS: Dict = dict(

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from chile_forecast.tuning import XGB_PARAM_DISTRIBUTIONS, tune_xgb_hyperparameters
+from chile_forecast.legacy.tuning import XGB_PARAM_DISTRIBUTIONS, tune_xgb_hyperparameters
 
 
 def test_tune_xgb_hyperparameters_returns_valid_params():

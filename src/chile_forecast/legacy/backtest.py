@@ -15,7 +15,7 @@ import pandas as pd
 from sklearn.metrics import mean_absolute_error
 
 from chile_forecast.config import DATE_COL, HOLDOUT_N, MIN_SERIES_LEN
-from chile_forecast.deepar_model import run_deepar_window
+from chile_forecast.legacy.deepar_windows import run_deepar_window
 from chile_forecast.xgb_model import run_xgb_holdout
 
 logger = logging.getLogger(__name__)

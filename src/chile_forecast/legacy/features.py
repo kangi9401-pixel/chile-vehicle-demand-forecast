@@ -4,9 +4,8 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from gluonts.time_feature import time_features_from_frequency_str
 
-from chile_forecast.config import DATE_COL, FREQ
+from chile_forecast.config import DATE_COL
 
 
 def get_longest_non_nan_slice(series: pd.Series) -> Tuple[int, int, int]:
@@ -34,14 +33,9 @@ def get_longest_non_nan_slice(series: pd.Series) -> Tuple[int, int, int]:
     return best_start, best_end, best_end - best_start
 
 
-def create_time_features(dates: pd.Series, freq: str = FREQ) -> np.ndarray:
-    feats = time_features_from_frequency_str(freq)
-    return np.stack([f(pd.DatetimeIndex(dates)) for f in feats], axis=0)
-
-
 def build_feature_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Derive the macro feature set (income ratios, resource-price ratios, etc.)
-    used as DeepAR/XGBoost covariates by the legacy (pre-audit) workflow, `run_legacy`."""
+    used as DeepAR/XGBoost covariates by the legacy workflow (`legacy.pipeline.run_legacy`)."""
     raw_df = raw_df.copy()
 
     # Crude oil (~USD/barrel, tens), iron ore (~USD/ton, tens-hundreds) and copper

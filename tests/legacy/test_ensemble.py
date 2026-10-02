@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from chile_forecast.ensemble import build_holdout_row, compute_ensemble_weights
+from chile_forecast.legacy.ensemble import build_holdout_row, compute_ensemble_weights
 
 
 def test_compute_ensemble_weights_equal_mae_gives_half_half():
