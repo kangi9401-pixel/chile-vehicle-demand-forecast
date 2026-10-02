@@ -18,9 +18,10 @@ commodity prices) and strong seasonality. This project asks two questions:
 synthetic data, not the Chilean auto market or any company's results.
 
 **Relationship to the original project:** the original internal model used a single
-DeepAR+XGBoost combination. Model comparison, the seasonal-naive baseline,
-rolling-origin backtesting and the macro covariates were added in this independent
-rebuild on synthetic data.
+DeepAR+XGBoost combination. Model comparison, the seasonal-naive baseline and
+rolling-origin backtesting were added in this independent rebuild on synthetic data.
+Population, income-tier and interest-rate inputs came from the original model; the
+commodity-price covariates were added in this rebuild.
 
 ## 2. Data
 
@@ -42,7 +43,7 @@ each series is evaluated on its observed span.
 | `MovingAverage6` | Mean of the last six training months |
 | `XGBoost` | 150 trees, seed 42, on leakage-safe macro, calendar (month sine/cosine) and trend features; no target lags |
 | `DeepAR` | GluonTS/PyTorch, 24 hidden units, 2 layers, lr 1e-3, 2 epochs, with the same leakage-safe features as dynamic covariates |
-| `LeakageSafeEnsemble` | `w·DeepAR + (1−w)·XGBoost`, `w = MAE_XGB / (MAE_DeepAR + MAE_XGB)` using 12-month MAE from strictly earlier origins only; `w = 0.5` at the first origin |
+| `LeakageSafeEnsemble` | `w·DeepAR + (1−w)·XGBoost`, `w = MAE_XGB / (MAE_DeepAR + MAE_XGB)` using earlier origins' errors on dates observed by the current cutoff only; `w = 0.5` at the first origin |
 
 DeepAR is deliberately small: with roughly 100 monthly observations per series, extra
 capacity adds runtime and overfitting risk rather than evidence. Python, NumPy and Torch
@@ -90,7 +91,11 @@ only backtest metric and no baseline. An audit ([AUDIT_KO.md](AUDIT_KO.md)) foun
 commodity prices were z-scored over the full 125 months before splitting, that
 backtests used the evaluation window's actual macro values, and that ensemble weights
 could include the origin being evaluated. Those earlier results are therefore not
-comparable to the ones below and are not repeated here. The earlier workflow remains
+comparable to the ones below and are not repeated here. A second audit found that,
+because the 12-month windows overlap, an earlier origin's error still covered up to
+nine months after the current cutoff; the weight now uses only errors on dates observed
+by the cutoff, which raised the mean ensemble WAPE by 0.09–0.15 points. The numbers
+below are after that fix. The earlier workflow remains
 available as `chile_forecast.legacy.pipeline.run_legacy()` for traceability.
 
 ## 5. Forecast Results
@@ -102,14 +107,14 @@ All numbers are read from `outputs/decision_system/forecast_metrics_summary.csv`
 
 | Model | 3 months | 6 months | 12 months |
 |---|---:|---:|---:|
-| LeakageSafeEnsemble | **13.80%** | **14.48%** | **14.98%** |
+| LeakageSafeEnsemble | **13.90%** | **14.63%** | **15.13%** |
 | DeepAR | 14.70% | 15.29% | 15.91% |
 | MovingAverage6 | 14.88% | 15.96% | 15.90% |
 | XGBoost | 15.20% | 15.87% | 16.21% |
 | SeasonalNaive | 18.38% | 18.46% | 18.47% |
 | LastValue | 18.68% | 20.56% | 20.51% |
 
-On the segment average, the ensemble's WAPE is 24.9%, 21.5% and 18.9% lower than
+On the segment average, the ensemble's WAPE is 24.4%, 20.7% and 18.1% lower than
 Seasonal Naive at 3, 6 and 12 months.
 
 ### 5.2 WAPE by segment and horizon
@@ -118,34 +123,35 @@ Seasonal Naive at 3, 6 and 12 months.
 
 | Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
 |---|---:|---:|---:|---:|---:|---:|
-| B-Sedan | 17.49 | 14.38 | 12.49 | 11.40 | 12.79 | **11.25** |
-| B_HB | 17.06 | 16.04 | 12.65 | 13.14 | 11.99 | **11.79** |
-| SUV-A | 15.84 | 16.61 | 15.48 | 14.59 | 14.30 | **13.90** |
-| SUV-B | 24.32 | 26.48 | 18.91 | 21.68 | 19.73 | **18.27** |
+| B-Sedan | 17.49 | 14.38 | 12.49 | 11.40 | 12.79 | **11.34** |
+| B_HB | 17.06 | 16.04 | 12.65 | 13.14 | 11.99 | **11.85** |
+| SUV-A | 15.84 | 16.61 | 15.48 | 14.59 | 14.30 | **14.03** |
+| SUV-B | 24.32 | 26.48 | 18.91 | 21.68 | 19.73 | **18.37** |
 
 **6 months**
 
 | Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
 |---|---:|---:|---:|---:|---:|---:|
-| B-Sedan | 19.40 | 15.31 | 14.24 | **11.60** | 13.79 | 11.91 |
-| B_HB | 18.32 | 15.97 | 13.15 | 12.54 | 11.99 | **11.58** |
-| SUV-A | 19.74 | 16.73 | 17.43 | 16.22 | 16.58 | **15.78** |
-| SUV-B | 24.79 | 25.82 | 19.01 | 23.14 | 18.78 | **18.66** |
+| B-Sedan | 19.40 | 15.31 | 14.24 | **11.60** | 13.79 | 12.05 |
+| B_HB | 18.32 | 15.97 | 13.15 | 12.54 | 11.99 | **11.62** |
+| SUV-A | 19.74 | 16.73 | 17.43 | 16.22 | 16.58 | **15.93** |
+| SUV-B | 24.79 | 25.82 | 19.01 | 23.14 | **18.78** | 18.92 |
 
 **12 months**
 
 | Segment | LastValue | SeasonalNaive | MA6 | XGBoost | DeepAR | Ensemble |
 |---|---:|---:|---:|---:|---:|---:|
-| B-Sedan | 16.50 | 14.27 | 13.01 | **11.13** | 14.66 | 12.17 |
-| B_HB | 18.41 | 16.94 | 14.03 | 13.14 | 13.15 | **12.59** |
-| SUV-A | 20.94 | 17.08 | 17.00 | **15.85** | 18.28 | 16.32 |
-| SUV-B | 26.20 | 25.58 | 19.56 | 24.70 | **17.57** | 18.85 |
+| B-Sedan | 16.50 | 14.27 | 13.01 | **11.13** | 14.66 | 12.21 |
+| B_HB | 18.41 | 16.94 | 14.03 | 13.14 | 13.15 | **12.64** |
+| SUV-A | 20.94 | 17.08 | 17.00 | **15.85** | 18.28 | 16.46 |
+| SUV-B | 26.20 | 25.58 | 19.56 | 24.70 | **17.57** | 19.22 |
 
 **The ensemble was not always better, and the best model differed by segment and
-horizon.** The ensemble is best in all four segments at 3 months and in three at 6
-months. At 12 months it is best only for B_HB; XGBoost wins B-Sedan and SUV-A, and
+horizon.** The ensemble is best in all four segments at 3 months, although only by
+0.06 points over XGBoost for B-Sedan. At 6 months it is best for B_HB and SUV-A, while
+XGBoost wins B-Sedan and DeepAR wins SUV-B. At 12 months it is best only for B_HB; XGBoost wins B-Sedan and SUV-A, and
 DeepAR wins SUV-B. Relative to Seasonal Naive at 12 months, the best model improves
-WAPE by 21.98% (B-Sedan), 25.68% (B_HB), 7.18% (SUV-A) and 31.33% (SUV-B). At the same
+WAPE by 21.98% (B-Sedan), 25.42% (B_HB), 7.18% (SUV-A) and 31.33% (SUV-B). At the same
 horizon, DeepAR is worse than Seasonal Naive for B-Sedan (14.66% vs 14.27%, −2.70%) and
 SUV-A (18.28% vs 17.08%, −7.06%), and the ensemble is worse than XGBoost alone for those
 two segments. On this data, a small neural model is not uniformly better than a
@@ -202,22 +208,22 @@ From `allocation_strategy_comparison.csv` and `constraint_checks.csv`:
 | Strategy | Budget (MCLP) | Incremental units | Net incremental profit (MCLP) | All constraints met |
 |---|---:|---:|---:|:---:|
 | Equal | 300.00 | 71.50 | 138.27 | yes |
-| Forecast share | 300.00 | 69.99 | 121.28 | yes |
+| Forecast share | 300.00 | 69.97 | 121.22 | yes |
 | Prior-year share | 300.00 | 70.83 | 130.03 | yes |
 | Optimized | **275.00** | 68.00 | **148.57** | yes |
 
 The optimizer spends 275 MCLP (City Hatchback 35, Compact Sedan 80, Compact SUV 80,
 Family SUV 80, Legacy Diesel SUV 0) and leaves 25 MCLP unused, because the remaining
 tiers return less contribution than they cost under the assumed margins. It produces
-3.5 fewer incremental units than equal allocation, but 7.45%, 22.5% and 14.26% more net
+3.5 fewer incremental units than equal allocation, but 7.45%, 22.56% and 14.26% more net
 incremental profit than the equal, forecast-share and prior-year-share rules. So
 maximizing volume and maximizing profit give different allocations.
 
 Demand scenarios scale base demand by 0.85 / 1.00 / 1.15, capped at 96% of inventory
 plus supply (`scenario_summary.csv`). The downside and base scenarios have the same
 optimum (275 MCLP, 148.57 MCLP profit). In the upside scenario, base demand uses more
-factory capacity, so the optimal spend *falls* to 184.11 MCLP (51.04 incremental units,
-124.59 MCLP profit). Stronger demand does not automatically justify more promotion when
+factory capacity, so the optimal spend *falls* to 185.56 MCLP (51.36 incremental units,
+125.29 MCLP profit). Stronger demand does not automatically justify more promotion when
 supply binds.
 
 ![Scenario allocation](../outputs/decision_system/scenario_budget_allocations.png)

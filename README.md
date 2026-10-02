@@ -14,9 +14,10 @@ constraints.
 > assumed function, not an estimated causal effect.
 >
 > **Relationship to the original project:** the original internal model used a single
-> DeepAR+XGBoost combination. Model comparison, the seasonal-naive baseline,
-> rolling-origin backtesting and the macro covariates were added in this independent
-> rebuild on synthetic data.
+> DeepAR+XGBoost combination. Model comparison, the seasonal-naive baseline and
+> rolling-origin backtesting were added in this independent rebuild on synthetic data.
+> Population, income-tier and interest-rate inputs came from the original model; the
+> commodity-price covariates were added in this rebuild.
 
 ## What the pipeline does
 
@@ -34,7 +35,8 @@ SUV-B**:
    - `DeepAR` — small GluonTS model (24 hidden units, 2 layers, 2 epochs) with the same
      leakage-safe dynamic features
    - `LeakageSafeEnsemble` — DeepAR/XGBoost inverse-MAE weighted average whose weight at
-     origin *k* uses only origins 1…*k*−1 (50/50 at the first origin)
+     each origin uses only earlier origins' errors on dates observed by the current
+     cutoff (50/50 at the first origin)
 3. **Metrics** — MAE, RMSE, **WAPE** (headline metric), sMAPE and MASE.
 4. **Promotion-budget optimization** — the latest forecasts feed five synthetic models'
    piecewise-linear, diminishing promotion response; `scipy.optimize.linprog` allocates a
@@ -58,7 +60,7 @@ All figures below are read from `outputs/decision_system/`, produced by
 
 | Model | 3 months | 6 months | 12 months |
 |---|---:|---:|---:|
-| LeakageSafeEnsemble | **13.80%** | **14.48%** | **14.98%** |
+| LeakageSafeEnsemble | **13.90%** | **14.63%** | **15.13%** |
 | DeepAR | 14.70% | 15.29% | 15.91% |
 | MovingAverage6 | 14.88% | 15.96% | 15.90% |
 | XGBoost | 15.20% | 15.87% | 16.21% |
@@ -69,16 +71,16 @@ All figures below are read from `outputs/decision_system/`, produced by
 
 | Segment | SeasonalNaive | XGBoost | DeepAR | Ensemble | Best |
 |---|---:|---:|---:|---:|---|
-| B-Sedan | 14.27% | **11.13%** | 14.66% | 12.17% | XGBoost |
-| B_HB | 16.94% | 13.14% | 13.15% | **12.59%** | Ensemble |
-| SUV-A | 17.08% | **15.85%** | 18.28% | 16.32% | XGBoost |
-| SUV-B | 25.58% | 24.70% | **17.57%** | 18.85% | DeepAR |
+| B-Sedan | 14.27% | **11.13%** | 14.66% | 12.21% | XGBoost |
+| B_HB | 16.94% | 13.14% | 13.15% | **12.64%** | Ensemble |
+| SUV-A | 17.08% | **15.85%** | 18.28% | 16.46% | XGBoost |
+| SUV-B | 25.58% | 24.70% | **17.57%** | 19.22% | DeepAR |
 
 **The ensemble was not always better; the best model differed by segment and horizon.**
-Averaged over segments, the ensemble has the lowest WAPE at every horizon (18.9% below
+Averaged over segments, the ensemble has the lowest WAPE at every horizon (18.1% below
 Seasonal Naive at 12 months), and it is best in all four segments at 3 months. But at
-6 months XGBoost is best for B-Sedan, and at 12 months a single model wins three of the
-four segments. DeepAR is *worse* than Seasonal Naive at 12 months for B-Sedan
+6 months XGBoost is best for B-Sedan and DeepAR for SUV-B, and at 12 months a single
+model wins three of the four segments. DeepAR is *worse* than Seasonal Naive at 12 months for B-Sedan
 (14.66% vs 14.27%) and SUV-A (18.28% vs 17.08%). No single model dominates, so these
 results do not support picking one "champion" model for every segment.
 
@@ -89,15 +91,15 @@ results do not support picking one "champion" model for every segment.
 | Strategy | Budget (MCLP) | Incremental units | Net incremental profit (MCLP) | All constraints met |
 |---|---:|---:|---:|:---:|
 | Equal | 300.00 | 71.50 | 138.27 | yes |
-| Forecast share | 300.00 | 69.99 | 121.28 | yes |
+| Forecast share | 300.00 | 69.97 | 121.22 | yes |
 | Prior-year share | 300.00 | 70.83 | 130.03 | yes |
 | Optimized | **275.00** | 68.00 | **148.57** | yes |
 
 The optimizer leaves 25 MCLP unspent: under the assumed margins, the remaining response
 tiers (every model's third tier and the City Hatchback's second) return less
 contribution than they cost. The result is 7.45% more net incremental profit than equal
-allocation, with 3.5 fewer incremental units. This is a property of the assumed response function, not evidence about
-real promotions.
+allocation, with 3.5 fewer incremental units. This is a property of the assumed
+response function, not evidence about real promotions.
 
 See **[docs/REPORT.md](docs/REPORT.md)** for the full method, per-horizon tables, the
 optimization formulation and limitations. A Korean version is in

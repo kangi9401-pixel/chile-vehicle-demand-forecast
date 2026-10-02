@@ -1,6 +1,6 @@
 model,forecast_target,factory,base_demand,forecast_lower,forecast_upper,inventory,supply_available,factory_capacity,lifecycle,unit_revenue_mclp,pre_tariff_cost_mclp,tariff_rate,tariff_adjusted_cost_mclp,unit_margin_mclp,regulatory_allowed,strategic_weight,min_budget_mclp,max_budget_mclp,prior_year_sales
 City Hatchback,B_HB,Plant North,4977.0,4230.45,5723.55,3930,1600,2557,mature,13.8,7.0,0.06,7.42,4.68,True,1.0,0,105,2150
 Compact Sedan,B-Sedan,Plant North,6690.6,5687.01,7694.19,5984,1450,2557,phase-out,16.2,8.3,0.06,8.798,5.402,True,1.08,30,115,2450
-Compact SUV,SUV-A,Plant South,3809.7,3238.25,4381.15,2433,1800,2980,growth,20.5,10.7,0.06,11.342,6.758,True,1.18,45,135,1880
-Family SUV,SUV-B,Plant South,2838.6,2412.81,3264.39,1704,1450,2980,mature,24.0,13.0,0.06,13.78,7.42,True,1.05,15,125,1620
-Legacy Diesel SUV,not_applicable,Plant South,0.0,0.0,0.0,0,0,2980,phase-out,22.0,12.5,0.08,13.5,5.8,False,0.85,0,0,420
+Compact SUV,SUV-A,Plant South,3870.0,3289.5,4450.5,2500,1800,2978,growth,20.5,10.7,0.06,11.342,6.758,True,1.18,45,135,1880
+Family SUV,SUV-B,Plant South,2830.5,2405.92,3255.07,1695,1450,2978,mature,24.0,13.0,0.06,13.78,7.42,True,1.05,15,125,1620
+Legacy Diesel SUV,not_applicable,Plant South,0.0,0.0,0.0,0,0,2978,phase-out,22.0,12.5,0.08,13.5,5.8,False,0.85,0,0,420

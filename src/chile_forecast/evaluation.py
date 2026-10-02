@@ -58,6 +58,28 @@ def _inverse_mae_weight(history: list[Tuple[float, float]]) -> float:
     return float(x_mae / (d_mae + x_mae))
 
 
+ErrorRecord = Tuple[pd.DatetimeIndex, np.ndarray, np.ndarray]
+
+
+def _visible_history(records: Sequence[ErrorRecord], cutoff: pd.Timestamp) -> list[Tuple[float, float]]:
+    """Per-origin (DeepAR MAE, XGBoost MAE) over target dates observed by `cutoff`.
+
+    Backtest windows overlap, so an earlier origin's forecast window can extend past
+    the current cutoff; only its errors on dates <= `cutoff` are visible.  Origins
+    with no visible dates are dropped.
+    """
+    cutoff = pd.Timestamp(cutoff)
+    history = []
+    for dates, deepar_abs_error, xgb_abs_error in records:
+        visible = np.asarray(pd.DatetimeIndex(dates) <= cutoff)
+        if visible.any():
+            history.append((
+                float(np.mean(np.asarray(deepar_abs_error)[visible])),
+                float(np.mean(np.asarray(xgb_abs_error)[visible])),
+            ))
+    return history
+
+
 def evaluate_target(
     raw_df: pd.DataFrame,
     target: str,
@@ -69,9 +91,9 @@ def evaluate_target(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate every model on identical cutoffs and target dates.
 
-    Hyperparameters are fixed in advance.  The ensemble weight at an origin is
-    estimated only from strictly earlier origins; the current test target never
-    influences its own weight.
+    Hyperparameters are fixed in advance.  The ensemble weight at an origin uses only
+    earlier origins' errors on target dates already observed by the current cutoff,
+    so no actual value after the cutoff influences the weight.
     """
     if target not in raw_df:
         raise ValueError(f"unknown target: {target}")
@@ -80,7 +102,7 @@ def evaluate_target(
     origins = common_origins(series[DATE_COL], max_horizon, n_origins, step_months)
     prediction_rows = []
     metric_rows = []
-    ensemble_history: list[Tuple[float, float]] = []
+    error_records: list[ErrorRecord] = []
 
     for origin_number, cutoff in enumerate(origins, start=1):
         train = series.loc[series[DATE_COL] <= cutoff].copy()
@@ -118,7 +140,7 @@ def evaluate_target(
                 deepar_kwargs={"hidden_size": 24, "num_layers": 2, "lr": 1e-3},
             )
             all_predictions["DeepAR"] = np.asarray(deep["preds_mean"], dtype=float)
-            ensemble_weight = _inverse_mae_weight(ensemble_history)
+            ensemble_weight = _inverse_mae_weight(_visible_history(error_records, cutoff))
             all_predictions["LeakageSafeEnsemble"] = (
                 ensemble_weight * all_predictions["DeepAR"]
                 + (1 - ensemble_weight) * all_predictions["XGBoost"]
@@ -154,9 +176,11 @@ def evaluate_target(
                     })
 
         if include_deepar:
-            ensemble_history.append((
-                calc_fit_metrics(y_actual, all_predictions["DeepAR"])["MAE"],
-                calc_fit_metrics(y_actual, all_predictions["XGBoost"])["MAE"],
+            # Errors use the raw (unclipped) predictions, as the weight always has.
+            error_records.append((
+                pd.DatetimeIndex(test[DATE_COL]),
+                np.abs(y_actual - all_predictions["DeepAR"]),
+                np.abs(y_actual - all_predictions["XGBoost"]),
             ))
         logger.info("%s origin %d/%d complete (%s)", target, origin_number, len(origins), cutoff.date())
 
