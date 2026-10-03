@@ -131,3 +131,40 @@ def create_decision_charts(
     ax.legend(ncol=2)
     paths.append(_save(fig, output_dir, "scenario_budget_allocations.png"))
     return paths
+
+
+def create_extension_charts(
+    calibration: pd.DataFrame,
+    sensitivity: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Quantile calibration and response-slope sensitivity charts."""
+    _style()
+    paths = []
+
+    fig, ax = plt.subplots(figsize=(6.8, 6.2))
+    ax.plot([0, 1], [0, 1], color="grey", lw=1, linestyle=":", label="Perfect calibration")
+    for i, (model, group) in enumerate(calibration.groupby("model")):
+        group = group.sort_values("nominal_level")
+        ax.plot(group["nominal_level"], group["observed_share_below"], marker="o", ms=4,
+                color=COLORS[i % len(COLORS)], linestyle=LINESTYLES[i % len(LINESTYLES)], label=model)
+    horizon = int(calibration["horizon"].iloc[0])
+    ax.set_title(f"Quantile calibration over {horizon}-month windows")
+    ax.set_xlabel("Nominal quantile level")
+    ax.set_ylabel("Share of actuals at or below the forecast quantile")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend()
+    paths.append(_save(fig, output_dir, "interval_calibration.png"))
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    for i, (strategy, group) in enumerate(sensitivity.groupby("strategy")):
+        group = group.sort_values("slope_factor")
+        ax.plot(group["slope_factor"], group["expected_incremental_profit_mclp"], marker="o",
+                color=COLORS[i % len(COLORS)], linestyle=LINESTYLES[i % len(LINESTYLES)], label=strategy)
+    ax.set_title("Allocation ranking under ±20% changes to the assumed promotion response")
+    ax.set_xlabel("Multiplier on every incremental-units-per-MCLP slope")
+    ax.set_ylabel("Net incremental profit (million CLP, simulated)")
+    ax.legend()
+    paths.append(_save(fig, output_dir, "optimization_sensitivity.png"))
+    return paths

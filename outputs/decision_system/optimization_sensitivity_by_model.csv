@@ -1,0 +1,9 @@
+model,slope_factor,total_budget_mclp,model_budget_mclp,expected_incremental_profit_mclp,all_constraints_ok
+City Hatchback,0.8,275.0,35.0,138.4153,True
+City Hatchback,1.2,300.0,80.0,164.8233,True
+Compact Sedan,0.8,230.0,35.0,138.84864,True
+Compact Sedan,1.2,275.0,80.0,168.2882,True
+Compact SUV,0.8,275.0,80.0,119.10602,True
+Compact SUV,1.2,300.0,105.0,175.33718000000002,True
+Family SUV,0.8,275.0,80.0,123.19449999999999,True
+Family SUV,1.2,275.0,80.0,173.9473,True

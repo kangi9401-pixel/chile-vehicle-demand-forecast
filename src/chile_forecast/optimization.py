@@ -214,3 +214,61 @@ def run_strategy_comparison(
         inventory_depletion_units=("inventory_depletion_units", "sum"),
     )
     return detail_all, comparison, pd.DataFrame(check_rows), pd.concat(scenario_frames, ignore_index=True)
+
+
+SENSITIVITY_FACTORS = (0.8, 0.9, 1.0, 1.1, 1.2)
+
+
+def _scale_response(response: pd.DataFrame, factor: float, model: str = None) -> pd.DataFrame:
+    scaled = response.copy()
+    mask = slice(None) if model is None else scaled["model"] == model
+    scaled.loc[mask, "incremental_units_per_mclp"] *= factor
+    return scaled
+
+
+def run_response_sensitivity(
+    models: pd.DataFrame,
+    response: pd.DataFrame,
+    factors=SENSITIVITY_FACTORS,
+    budget_mclp: float = TOTAL_BUDGET_MCLP,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Re-run the base-scenario comparison with the assumed response slopes scaled.
+
+    Returns (global, by_model).  ``global`` scales every model's tier slopes by each
+    factor and re-evaluates all four strategies.  ``by_model`` scales one allowed
+    model's slopes by the smallest and largest factor while holding the others fixed,
+    and reports the optimized result.
+    """
+    global_rows = []
+    for factor in factors:
+        scaled = _scale_response(response, factor)
+        detail, comparison, checks, _ = run_strategy_comparison(models, scaled, budget_mclp)
+        base_checks = checks.loc[checks["scenario"].isna()].set_index("strategy")["all_constraints_ok"]
+        optimized = detail.loc[detail["strategy"] == "Optimized"].set_index("model")["allocated_mclp"]
+        for row in comparison.itertuples():
+            global_rows.append({
+                "slope_factor": factor,
+                "strategy": row.strategy,
+                "total_budget_mclp": row.total_budget_mclp,
+                "expected_incremental_sales": row.expected_incremental_sales,
+                "expected_incremental_profit_mclp": row.expected_incremental_profit_mclp,
+                "all_constraints_ok": bool(base_checks[row.strategy]),
+                **({f"alloc_{m}": optimized[m] for m in optimized.index} if row.strategy == "Optimized" else {}),
+            })
+
+    model_rows = []
+    for model in models.loc[models["regulatory_allowed"], "model"]:
+        for factor in (min(factors), max(factors)):
+            allocation, _ = optimize_budget(models, _scale_response(response, factor, model), budget_mclp)
+            detail, checks = evaluate_allocation(
+                "Optimized", allocation, models, _scale_response(response, factor, model)
+            )
+            model_rows.append({
+                "model": model,
+                "slope_factor": factor,
+                "total_budget_mclp": float(detail["allocated_mclp"].sum()),
+                "model_budget_mclp": float(detail.loc[detail["model"] == model, "allocated_mclp"].sum()),
+                "expected_incremental_profit_mclp": float(detail["expected_incremental_profit_mclp"].sum()),
+                "all_constraints_ok": bool(checks["all_constraints_ok"]),
+            })
+    return pd.DataFrame(global_rows), pd.DataFrame(model_rows)

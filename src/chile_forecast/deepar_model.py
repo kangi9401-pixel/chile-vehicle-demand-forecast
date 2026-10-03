@@ -18,6 +18,7 @@ from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.torch.model.deepar import DeepAREstimator
 
 from chile_forecast.config import DATE_COL, FORECAST_STEP, FREQ, MACRO_COLS_FOR_DEEPAR, RANDOM_SEED
+from chile_forecast.probabilistic import QUANTILE_LEVELS
 
 # torch >=2.6 defaults `torch.load(weights_only=True)`, which rejects the
 # assorted non-tensor objects (functools.partial, getattr, ...) gluonts embeds
@@ -130,5 +131,7 @@ def train_and_forecast(
         "preds_mean": forecast.mean,
         "preds_low": forecast.quantile(0.10),
         "preds_up": forecast.quantile(0.90),
+        # Read from the samples already drawn above, so this consumes no randomness.
+        "quantiles": np.column_stack([forecast.quantile(level) for level in QUANTILE_LEVELS]),
     }
 

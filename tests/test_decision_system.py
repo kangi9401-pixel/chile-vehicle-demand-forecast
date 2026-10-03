@@ -8,7 +8,7 @@ from chile_forecast.baselines import seasonal_naive
 from chile_forecast.config import BACKTEST_HORIZONS, DATE_COL
 from chile_forecast.evaluation import common_origins, evaluate_target
 from chile_forecast.metrics import calc_fit_metrics
-from chile_forecast.optimization import run_strategy_comparison
+from chile_forecast.optimization import run_response_sensitivity, run_strategy_comparison
 from chile_forecast.pipeline import load_raw_data, run
 from chile_forecast.preprocessing import LeakageSafePreprocessor
 from chile_forecast.promotion_response import build_synthetic_promotion_inputs
@@ -114,6 +114,20 @@ def test_optimization_respects_all_budget_supply_factory_and_regulatory_constrai
     assert set(scenarios["scenario"]) == {"downside", "base", "upside"}
 
 
+def test_response_sensitivity_at_unit_factor_reproduces_the_base_comparison():
+    predictions, summary = _fake_forecast_outputs()
+    models, response = build_synthetic_promotion_inputs(predictions, summary)
+    _, comparison, _, _ = run_strategy_comparison(models, response)
+    sensitivity, by_model = run_response_sensitivity(models, response)
+
+    base = sensitivity.loc[sensitivity["slope_factor"] == 1.0].set_index("strategy")
+    expected = comparison.set_index("strategy")
+    for column in ("total_budget_mclp", "expected_incremental_profit_mclp"):
+        pd.testing.assert_series_equal(base[column].sort_index(), expected[column].sort_index())
+    assert sensitivity["all_constraints_ok"].all() and by_model["all_constraints_ok"].all()
+    assert set(by_model["model"]) == set(models.loc[models["regulatory_allowed"], "model"])
+
+
 def test_fixed_seed_makes_non_deep_evaluation_reproducible():
     raw = load_raw_data()
     first_pred, first_metrics = evaluate_target(raw, "SUV-B", horizons=(3,), n_origins=2, include_deepar=False)
@@ -143,5 +157,13 @@ def test_full_synthetic_pipeline_smoke(tmp_path):
         "scenario_summary.csv",
         "forecast_actual_vs_predicted.png",
         "scenario_budget_allocations.png",
+        "forecast_quantiles.csv",
+        "probabilistic_metrics_summary.csv",
+        "quantile_calibration.csv",
+        "forecast_significance.csv",
+        "optimization_sensitivity.csv",
+        "optimization_sensitivity_by_model.csv",
+        "interval_calibration.png",
+        "optimization_sensitivity.png",
     }
     assert required <= {path.name for path in tmp_path.iterdir()}

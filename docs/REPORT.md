@@ -81,7 +81,33 @@ rows and 4,032 prediction rows (`forecast_metrics_by_origin.csv`,
 MAE, RMSE, **WAPE** (Σ|actual − forecast| / Σ|actual|, the headline metric), sMAPE, and
 MASE scaled by the in-sample seasonal-naive error. Plain MAPE is not reported because it
 is unstable near zero. Adjacent windows overlap by 9 months, so the spread across origins
-describes variability but does not support independence-based significance tests.
+describes variability; Section 3.6 describes how the significance tests account for the
+overlap.
+
+### 3.5 Probabilistic evaluation
+
+DeepAR's 19 quantiles (5%, 10%, …, 95%) are taken from the same sample paths as its
+mean, so the point forecasts are unchanged. The probabilistic baseline is Seasonal Naive
+plus the empirical quantiles of its year-on-year errors within the training window.
+`probabilistic.py` scores both, per origin and horizon:
+
+- **80% coverage**: share of actuals inside the 10–90% interval (nominal 80%);
+- **interval width** and the Gneiting–Raftery **interval score** (width plus a 2/α
+  penalty for misses), both as a percentage of Σ|actual|;
+- **scaled CRPS**: twice the mean pinball loss over the 19 levels, summed and divided by
+  Σ|actual|. For a point forecast this equals WAPE, so the two are on the same scale;
+- **calibration**: share of actuals at or below each quantile, pooled over segments and
+  origins.
+
+### 3.6 Significance tests
+
+`significance.py` applies a two-sided Diebold–Mariano test to the per-origin WAPE
+difference between two models, for each segment and for the segment average. An h-month
+window overlaps the next ⌈h/3⌉ − 1 windows, so the variance uses a Newey–West (Bartlett)
+estimator with lag 0, 1 and 3 at 3, 6 and 12 months. The statistic includes the
+Harvey–Leybourne–Newbold correction and uses a Student-t reference with n − 1 = 7
+degrees of freedom; at lag 0 it reduces to a one-sample t-test, which a unit test checks.
+Within each scope and horizon, the six model pairs get a Holm adjustment.
 
 ## 4. Relationship to This Repository's Earlier Version
 
@@ -174,6 +200,69 @@ about real demand drivers.
 
 ![SHAP summary for Total Market Size (legacy workflow)](sample_shap_summary.png)
 
+### 5.4 Probabilistic forecasts
+
+From `probabilistic_metrics_summary.csv` (means over segments; nominal coverage 80%):
+
+| Model | Horizon | 80% coverage | Interval width | Interval score | Scaled CRPS | Point WAPE |
+|---|---:|---:|---:|---:|---:|---:|
+| DeepAR | 3 | 84.38% | 51.54 | 62.91 | **10.99** | 14.70 |
+| DeepAR | 6 | 80.21% | 50.91 | 63.86 | **11.33** | 15.29 |
+| DeepAR | 12 | 79.69% | 51.70 | 66.21 | **11.79** | 15.91 |
+| SeasonalNaive | 3 | 81.25% | 61.90 | 78.17 | 13.70 | 18.38 |
+| SeasonalNaive | 6 | 81.25% | 61.89 | 77.78 | 13.80 | 18.46 |
+| SeasonalNaive | 12 | 82.03% | 60.90 | 76.97 | 13.68 | 18.47 |
+
+12 months by segment:
+
+| Segment | Coverage DeepAR | Coverage SN | CRPS DeepAR | CRPS SN |
+|---|---:|---:|---:|---:|
+| B-Sedan | 70.83% | 81.25% | 11.29 | **10.79** |
+| B_HB | 82.29% | 85.42% | **10.02** | 12.35 |
+| SUV-A | 82.29% | 82.29% | **13.01** | 13.26 |
+| SUV-B | 83.33% | 79.17% | **12.84** | 18.34 |
+
+On average, DeepAR's 80% interval covers close to its nominal rate (84.4%, 80.2% and
+79.7% at 3, 6 and 12 months). It is about 9–11 points of volume narrower than the
+Seasonal Naive interval and has a lower interval score and CRPS at every horizon. The
+gap between DeepAR's CRPS and its point WAPE shows that the distribution carries
+information beyond the mean.
+
+The average hides two things. First, for B-Sedan DeepAR is over-confident: 12-month
+coverage is 70.83% and its CRPS is worse than the baseline's, which matches its weak
+point accuracy there. Second, for SUV-A DeepAR's CRPS is slightly better than the
+baseline's even though its point WAPE is worse (Section 5.2). The pooled calibration
+curve (`quantile_calibration.csv`) lies above the diagonal in the middle of the
+distribution: 56% of actuals fall below DeepAR's median and 59% below Seasonal Naive's,
+so both distributions sit slightly high.
+
+![Quantile calibration](../outputs/decision_system/interval_calibration.png)
+
+### 5.5 Statistical significance
+
+From `forecast_significance.csv`, segment average (negative difference favours model A):
+
+| Horizon | Model A | Model B | Mean WAPE diff | DM stat | p | p (Holm) |
+|---:|---|---|---:|---:|---:|---:|
+| 3 | Ensemble | SeasonalNaive | −4.48 | −2.53 | 0.039 | 0.195 |
+| 3 | DeepAR | SeasonalNaive | −3.67 | −2.73 | 0.029 | 0.177 |
+| 3 | Ensemble | XGBoost | −1.31 | −1.76 | 0.122 | 0.489 |
+| 6 | Ensemble | SeasonalNaive | −3.83 | −1.89 | 0.101 | 0.506 |
+| 6 | DeepAR | SeasonalNaive | −3.17 | −2.17 | 0.067 | 0.400 |
+| 6 | Ensemble | XGBoost | −1.25 | −1.71 | 0.132 | 0.527 |
+| 12 | Ensemble | SeasonalNaive | −3.34 | −2.67 | 0.032 | 0.193 |
+| 12 | DeepAR | SeasonalNaive | −2.56 | −2.36 | 0.051 | 0.254 |
+| 12 | Ensemble | XGBoost | −1.07 | −1.83 | 0.110 | 0.441 |
+
+The ensemble's average advantage over Seasonal Naive is nominally significant at 3 and
+12 months (p ≈ 0.03–0.04), but not after adjusting for the six pairs tested at each
+horizon (Holm p ≈ 0.19). Its advantage over XGBoost alone is not significant at any
+horizon (p 0.11–0.13). Across all 90 segment × horizon × pair tests, 12 have an
+unadjusted p below 0.05 and none have a Holm-adjusted p below 0.05 (smallest 0.143).
+The accuracy ranking in Sections 5.1–5.2 is therefore a description of this backtest.
+It is not statistical evidence that one model is better; with eight overlapping origins
+per segment, the tests can detect only large, consistent differences.
+
 ## 6. Promotion-Budget Optimization
 
 ### 6.1 Formulation
@@ -228,6 +317,35 @@ supply binds.
 
 ![Scenario allocation](../outputs/decision_system/scenario_budget_allocations.png)
 
+### 6.3 Sensitivity to the assumed response
+
+The tier slopes are the least grounded inputs, so `optimization_sensitivity.csv` re-runs
+the base-scenario comparison with every slope multiplied by 0.8–1.2:
+
+| Slope factor | Optimized budget | Optimized profit | Equal profit | Optimized vs Equal | Forecast share | Prior-year share |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.8 | 230.00 | 73.85 | 50.62 | +45.90% | 36.98 | 44.02 |
+| 0.9 | 275.00 | 106.21 | 94.45 | +12.46% | 79.10 | 87.03 |
+| 1.0 | 275.00 | 148.57 | 138.27 | +7.45% | 121.22 | 130.03 |
+| 1.1 | 300.00 | 191.67 | 182.10 | +5.25% | 163.34 | 173.03 |
+| 1.2 | 300.00 | 236.37 | 225.93 | +4.62% | 205.47 | 216.03 |
+
+The ranking (optimized > equal > prior-year share > forecast share) holds at every
+factor, and every allocation meets all constraints. The size of the advantage depends
+heavily on the assumption. When response is weaker, the optimizer gains most by not
+spending: at 0.8× it also drops the Compact Sedan's second tier and spends 230 MCLP.
+When response is stronger, the City Hatchback's second tier becomes worthwhile, the
+whole budget is spent, and the optimizer also delivers more incremental units than
+equal allocation (80.30 vs 78.65 at 1.1×). Its advantage shrinks to about 5%.
+
+Scaling one model at a time by 0.8× and 1.2× (`optimization_sensitivity_by_model.csv`)
+moves the optimized profit the most for the Compact SUV (119.11 to 175.34 MCLP), whose
+spend rises to 105 MCLP at 1.2×. Next come the Family SUV (123.19–173.95), Compact Sedan
+(138.85–168.29) and City Hatchback (138.42–164.82). The Compact SUV's response
+assumption is therefore the one most worth estimating first.
+
+![Optimization sensitivity](../outputs/decision_system/optimization_sensitivity.png)
+
 ## 7. Limitations and Future Work
 
 - **Synthetic data and an assumed response function.** The results show that the
@@ -239,10 +357,16 @@ supply binds.
   forecast vintages that were available at each origin.
 - **Small DeepAR.** About 100 observations per series and 2 epochs make this a
   structural comparison, not a statement about neural forecasters in general.
-- **Overlapping windows.** The 8 origins overlap, so errors are correlated across
-  origins.
-- **Deterministic scenarios.** Three point scenarios, no chance constraints, CVaR or
-  distributionally robust optimization, and no forecast-value-added analysis of whether
-  better accuracy changes the allocation.
+- **Overlapping windows and low power.** The 8 origins overlap, so errors are
+  correlated across origins. The Diebold–Mariano tests account for this (Section 3.6),
+  but with eight origins they can only detect large, consistent differences.
+- **Simple probabilistic baseline.** The Seasonal Naive interval applies one in-sample
+  error distribution to every lead, so it does not widen with horizon. A stronger
+  probabilistic baseline (e.g. ETS or quantile regression) would make the comparison in
+  Section 5.4 more demanding.
+- **Deterministic scenarios.** Three point scenarios and a one-parameter sensitivity
+  sweep (Section 6.3); no chance constraints, CVaR or distributionally robust
+  optimization, and no forecast-value-added analysis of whether better accuracy changes
+  the allocation.
 - **Legacy SHAP.** Feature attribution (Section 5.3) was not recomputed for the
   leakage-safe feature set.

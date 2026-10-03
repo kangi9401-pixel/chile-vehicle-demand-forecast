@@ -38,10 +38,17 @@ SUV-B**:
      each origin uses only earlier origins' errors on dates observed by the current
      cutoff (50/50 at the first origin)
 3. **Metrics** — MAE, RMSE, **WAPE** (headline metric), sMAPE and MASE.
-4. **Promotion-budget optimization** — the latest forecasts feed five synthetic models'
+4. **Probabilistic evaluation** — DeepAR's 5–95% quantiles, and a Seasonal Naive interval
+   built from its in-sample year-on-year errors, are scored on 80% interval coverage,
+   interval score and a quantile-based CRPS.
+5. **Significance tests** — Diebold–Mariano tests on per-origin WAPE differences, with a
+   Newey–West variance for the overlapping windows, the Harvey–Leybourne–Newbold
+   small-sample correction and a Holm adjustment.
+6. **Promotion-budget optimization** — the latest forecasts feed five synthetic models'
    piecewise-linear, diminishing promotion response; `scipy.optimize.linprog` allocates a
    300 MCLP (million Chilean pesos) budget and is compared against equal,
-   forecast-share and prior-year-share allocations, plus downside/base/upside scenarios.
+   forecast-share and prior-year-share allocations, plus downside/base/upside scenarios
+   and a ±20% sensitivity analysis of the assumed response slopes.
 
 ### Leakage controls
 
@@ -80,9 +87,25 @@ All figures below are read from `outputs/decision_system/`, produced by
 Averaged over segments, the ensemble has the lowest WAPE at every horizon (18.1% below
 Seasonal Naive at 12 months), and it is best in all four segments at 3 months. But at
 6 months XGBoost is best for B-Sedan and DeepAR for SUV-B, and at 12 months a single
-model wins three of the four segments. DeepAR is *worse* than Seasonal Naive at 12 months for B-Sedan
-(14.66% vs 14.27%) and SUV-A (18.28% vs 17.08%). No single model dominates, so these
-results do not support picking one "champion" model for every segment.
+model wins three of the four segments. DeepAR is *worse* than Seasonal Naive at 12 months
+for B-Sedan (14.66% vs 14.27%) and SUV-A (18.28% vs 17.08%). No single model dominates,
+so these results do not support picking one "champion" model for every segment.
+
+**The gains over Seasonal Naive are suggestive, not statistically established.** On the
+segment average, the ensemble's per-origin WAPE is lower than Seasonal Naive's by
+4.48 points at 3 months (Diebold–Mariano p = 0.039) and 3.34 points at 12 months
+(p = 0.032). After a Holm adjustment for the six model pairs at each horizon, those
+p-values are 0.195 and 0.193. Across all 90 segment × horizon × pair tests, 12 have an
+unadjusted p below 0.05 and none survive the Holm adjustment. Eight overlapping origins
+per segment give these tests little power.
+
+**DeepAR's intervals are roughly calibrated and sharper than the baseline's.** Averaged
+over segments at 12 months, 79.7% of actuals fall inside DeepAR's nominal 80% interval
+(Seasonal Naive interval: 82.0%). DeepAR's interval is narrower (51.7% vs 60.9% of
+actual volume) and has a lower scaled CRPS (11.79 vs 13.68; for a point forecast this
+equals WAPE). The exception is B-Sedan, where DeepAR's 12-month coverage is only 70.8% and
+its CRPS is worse than the baseline's (11.29 vs 10.79). Both models' medians sit
+slightly high: 56% (DeepAR) and 59% (Seasonal Naive) of actuals fall below them.
 
 ![12-month model comparison](outputs/decision_system/model_performance_comparison.png)
 
@@ -101,6 +124,12 @@ contribution than they cost. The result is 7.45% more net incremental profit tha
 allocation, with 3.5 fewer incremental units. This is a property of the assumed
 response function, not evidence about real promotions.
 
+**The ranking holds under ±20% changes to the assumed response, but the size of the gain
+does not.** When every tier slope is multiplied by 0.8–1.2, the optimizer stays best and
+the heuristic order (equal > prior-year share > forecast share) does not change. Its
+advantage over equal allocation falls from 45.9% at 0.8× to 4.6% at 1.2×. Its spend also
+changes, from 230 MCLP (0.8×) to the full 300 MCLP (1.1× and above).
+
 See **[docs/REPORT.md](docs/REPORT.md)** for the full method, per-horizon tables, the
 optimization formulation and limitations. A Korean version is in
 [docs/REPORT_KO.md](docs/REPORT_KO.md), and the audit of this repository's earlier
@@ -113,9 +142,12 @@ optimization formulation and limitations. A Korean version is in
 - ~100 monthly observations per segment is small for DeepAR; the 2-epoch setting is a
   structural comparison, not a tuned neural baseline.
 - Future macro covariates are held flat at their last value.
-- The 8 backtest windows overlap by 9 months, so their errors are not independent samples.
-- The optimization uses three deterministic scenarios; no chance constraints or robust
-  optimization.
+- The 8 backtest windows overlap by 9 months, so their errors are not independent
+  samples; the significance tests account for this but have low power.
+- The Seasonal Naive interval uses one in-sample error distribution for every lead, so it
+  does not widen with horizon.
+- The optimization uses deterministic scenarios and a one-parameter sensitivity sweep; no
+  chance constraints or robust optimization.
 
 ## Getting started
 
@@ -135,9 +167,10 @@ python run_pipeline.py                   # full backtest + optimization -> outpu
 ensemble, so it does not reproduce the results above.
 
 Outputs in `outputs/decision_system/`: forecast predictions and per-origin / summary
-metrics, improvement versus Seasonal Naive, promotion inputs and response tiers,
-allocation detail and strategy comparison, constraint checks, scenarios, and seven
-charts.
+metrics, improvement versus Seasonal Naive, quantile forecasts with probabilistic
+metrics and calibration, Diebold–Mariano tests, promotion inputs and response tiers,
+allocation detail and strategy comparison, constraint checks, scenarios, response
+sensitivity, and nine charts.
 
 ## Architecture
 
@@ -151,8 +184,11 @@ src/chile_forecast/
   deepar_model.py            Seeded, deterministic DeepAR trainer
   evaluation.py              Common 8-origin, 3/6/12-month evaluation and ensemble
   metrics.py                 MAE / RMSE / WAPE / sMAPE / MASE
+  probabilistic.py           Quantile CRPS, interval score, Seasonal Naive interval
+  significance.py            Diebold–Mariano tests with overlap-aware variance
   promotion_response.py      Synthetic promotion inputs and diminishing response tiers
-  optimization.py            Budget LP, heuristic strategies, constraint checks
+  optimization.py            Budget LP, heuristic strategies, constraint checks,
+                             response-slope sensitivity
   decision_visualization.py  Report charts
   pipeline.py                run(): the default pipeline
   legacy/                    Pre-audit 3-month workflow (run_legacy, hyperparameter

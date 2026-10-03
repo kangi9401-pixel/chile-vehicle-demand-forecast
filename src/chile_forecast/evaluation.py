@@ -21,6 +21,7 @@ from chile_forecast.config import (
 from chile_forecast.deepar_model import build_feat_dynamic_real, train_and_forecast
 from chile_forecast.metrics import calc_fit_metrics, seasonal_mase_scale
 from chile_forecast.preprocessing import LeakageSafePreprocessor
+from chile_forecast.probabilistic import QUANTILE_LEVELS, quantile_column, seasonal_naive_quantiles
 from chile_forecast.xgb_model import run_xgb_holdout
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,12 @@ def evaluate_target(
     step_months: int = BACKTEST_STEP_MONTHS,
     include_deepar: bool = True,
     deepar_epochs: int = DEEPAR_BACKTEST_EPOCHS,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    return_quantiles: bool = False,
+):
     """Evaluate every model on identical cutoffs and target dates.
+
+    Returns ``(predictions, metrics)``, plus a third frame of quantile forecasts over
+    the full window (DeepAR and a Seasonal Naive interval) when ``return_quantiles``.
 
     Hyperparameters are fixed in advance.  The ensemble weight at an origin uses only
     earlier origins' errors on target dates already observed by the current cutoff,
@@ -103,6 +108,7 @@ def evaluate_target(
     prediction_rows = []
     metric_rows = []
     error_records: list[ErrorRecord] = []
+    quantile_rows = []
 
     for origin_number, cutoff in enumerate(origins, start=1):
         train = series.loc[series[DATE_COL] <= cutoff].copy()
@@ -146,6 +152,24 @@ def evaluate_target(
                 + (1 - ensemble_weight) * all_predictions["XGBoost"]
             )
 
+        if return_quantiles:
+            quantile_sets = {"SeasonalNaive": seasonal_naive_quantiles(y_train, max_horizon)}
+            if include_deepar:
+                quantile_sets["DeepAR"] = np.asarray(deep["quantiles"], dtype=float)
+            for model, quantiles in quantile_sets.items():
+                quantiles = np.maximum(quantiles, 0.0)
+                for lead, (date, actual) in enumerate(zip(test[DATE_COL], y_actual), start=1):
+                    quantile_rows.append({
+                        "target": target,
+                        "origin_number": origin_number,
+                        "train_end": cutoff,
+                        "lead": lead,
+                        "date": date,
+                        "model": model,
+                        "actual": float(actual),
+                        **{quantile_column(tau): float(quantiles[lead - 1, j]) for j, tau in enumerate(QUANTILE_LEVELS)},
+                    })
+
         mase_scale = seasonal_mase_scale(y_train)
         for horizon in horizons:
             actual_h = y_actual[:horizon]
@@ -184,6 +208,8 @@ def evaluate_target(
             ))
         logger.info("%s origin %d/%d complete (%s)", target, origin_number, len(origins), cutoff.date())
 
+    if return_quantiles:
+        return pd.DataFrame(prediction_rows), pd.DataFrame(metric_rows), pd.DataFrame(quantile_rows)
     return pd.DataFrame(prediction_rows), pd.DataFrame(metric_rows)
 
 
